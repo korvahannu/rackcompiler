@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 require_relative 'rackcompiler/version'
+require_relative 'rackcompiler/tokenizer'
 
 module Rackcompiler
-  class Error < StandardError; end
+  path = ARGV[0]
+
+  Tokenizer.new(path)
 end
