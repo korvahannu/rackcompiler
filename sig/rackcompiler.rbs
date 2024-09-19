@@ -1,0 +1,3 @@
+module Rackcompiler
+  VERSION: String
+end
