@@ -27,16 +27,16 @@ module Rackcompiler
     def compile_files(files, is_directory: true)
       raise 'Output path not defined, something went horribly wrong!' if @output_path.nil?
 
-      File.open(@output_path, 'w') do |output_file|
-        files.each do |file|
-          get_tokenizer(file, is_directory)
-        end
+      files.each do |file|
+        output_filepath = "#{@output_path}/#{File.basename(file, '.*')}.vm"
+        puts "Compiling file '#{file}' to '#{output_filepath}'"
+        get_tokenizer(file, is_directory)
       end
     end
 
     def get_tokenizer(file, is_directory)
       if is_directory
-        Tokenizer.new("#{@filepath}#{file}")
+        Tokenizer.new("#{@filepath}\\#{file}")
       else
         Tokenizer.new(file)
       end
@@ -44,8 +44,8 @@ module Rackcompiler
 
     def get_files_to_compile(filepath)
       Dir.entries(filepath)
-         .select { |f| f.end_with?(".vm") }
-         .select { |f| File.file?("#{@filepath}#{f}") }
+         .select { |f| f.end_with?('.jack') }
+         .select { |f| File.file?("#{@filepath}\\#{f}") }
     end
 
     def get_file_basename(filepath)
@@ -53,17 +53,20 @@ module Rackcompiler
     end
 
     def setup_output_path(filepath, output_path)
-      if @output_path.nil?
+      if output_path.nil?
         derive_output_file_name(filepath)
       else
-        @output_path = output_path
+        raise 'Output path must be a directory' unless File.directory?(output_path)
+
+        @output_path = File.absolute_path(output_path)
       end
+
+      puts @output_path
     end
 
     def derive_output_file_name(filepath)
-      basename = get_file_basename(filepath)
-      @output_path = File.file?(filepath) ? "#{basename}.asm" : "#{basename.capitalize}.asm"
-      puts @output_path
+      absolute = File.absolute_path(filepath)
+      @output_path = File.directory?(absolute) ? absolute : File.absolute_path(File.dirname(filepath))
     end
   end
 
@@ -71,5 +74,7 @@ module Rackcompiler
   raise 'Please provide a filepath' if filepath.nil? || filepath.empty?
   raise 'Invalid filepath: Input file or directory does not exist' unless File.exist?(filepath)
 
-  Compiler.new(filepath).compile
+  output_path = ARGV[1]
+
+  Compiler.new(filepath, output_path: output_path).compile
 end

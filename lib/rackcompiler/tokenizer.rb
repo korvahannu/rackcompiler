@@ -24,12 +24,12 @@ end
 class Tokenizer
   def initialize(filepath)
     @tokens = TokenParser.new(filepath).parse.tokens
-    @index = 0
+    @index = -1
     puts @tokens
   end
 
   def has_more_tokens?
-    @index < @tokens.length
+    @index + 1 < @tokens.length
   end
 
   def advance
@@ -39,7 +39,7 @@ class Tokenizer
   end
 
   def reset
-    @index = 0
+    @index = -1
   end
 
   def current_token
@@ -47,6 +47,8 @@ class Tokenizer
   end
 
   def token_type
+    raise 'Current token is nil' if current_token.nil?
+
     return 'keyword' if Keyword.is_keyword(current_token)
     return 'symbol' if Symbol.is_symbol(current_token)
 
@@ -75,7 +77,7 @@ class Tokenizer
   def keyword
     raise 'Cannot get keyword when token type is not of keyword type' if token_type != 'keyword'
 
-    current_token.upcase
+    current_token
   end
 
   def symbol
@@ -102,10 +104,46 @@ class Tokenizer
     current_token[1...-1]
   end
 
+  def write_xml(output_filepath)
+    File.open(output_filepath, 'w') do |output_file|
+      output_file.puts '<tokens>'
+      while has_more_tokens?
+        advance
+        output_file.puts xml_element
+      end
+      output_file.puts '</tokens>'
+    end
+
+    reset
+  end
+
+  def xml_element
+    case token_type
+    when 'keyword'
+      content = keyword
+    when 'symbol'
+      content = symbol
+      content = '&lt;' if content == '<'
+      content = '&gt;' if content == '>'
+      content = '&quot;' if content == '"'
+      content = '&amp;' if content == '&'
+    when 'integerConstant'
+      content = int_val
+    when 'stringConstant'
+      content = string_val
+    when 'identifier'
+      content = identifier
+    else
+      raise "Encountered unknown token type #{token_type}"
+    end
+
+    "<#{token_type}> #{content} </#{token_type}>"
+  end
+
   private
 
   def number_or_nil(string)
-    result = Integer(string || '')
+    Integer(string || '')
   rescue ArgumentError
     nil
   end
