@@ -25,6 +25,7 @@ class Tokenizer
   def initialize(filepath)
     @tokens = TokenParser.new(filepath).parse.tokens
     @index = 0
+    puts @tokens
   end
 
   def has_more_tokens?
