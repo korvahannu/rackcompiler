@@ -22,8 +22,8 @@ class Symbol
 end
 
 class Tokenizer
-  def initialize(filepath)
-    @tokens = TokenParser.new(filepath).parse.tokens
+  def initialize(input_filepath)
+    @tokens = TokenParser.new(input_filepath).parse.tokens
     @index = -1
   end
 
@@ -163,15 +163,15 @@ end
 class TokenParser
   attr_reader :tokens
 
-  def initialize(filepath)
+  def initialize(input_filepath)
     @processing_comment_block = false
     @compound_word = nil
     @tokens = []
-    @filepath = filepath
+    @input_filepath = input_filepath
   end
 
   def parse
-    File.foreach(@filepath) do |line|
+    File.foreach(@input_filepath) do |line|
       next if line.chomp.start_with?('//')
 
       line.split.each do |word|
