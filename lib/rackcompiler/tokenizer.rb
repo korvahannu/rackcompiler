@@ -82,7 +82,18 @@ class Tokenizer
   def symbol
     raise 'Cannot get symbol when token type is not of symbol type' if token_type != 'symbol'
 
-    current_token
+    case current_token
+    when '<'
+      '&lt;'
+    when '>'
+      '&gt;'
+    when '"'
+      '&quot;'
+    when '&'
+      '&amp;'
+    else
+      current_token
+    end
   end
 
   def identifier
@@ -122,10 +133,6 @@ class Tokenizer
       content = keyword
     when 'symbol'
       content = symbol
-      content = '&lt;' if content == '<'
-      content = '&gt;' if content == '>'
-      content = '&quot;' if content == '"'
-      content = '&amp;' if content == '&'
     when 'integerConstant'
       content = int_val
     when 'stringConstant'
