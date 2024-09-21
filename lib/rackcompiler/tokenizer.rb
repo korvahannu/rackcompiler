@@ -25,7 +25,6 @@ class Tokenizer
   def initialize(filepath)
     @tokens = TokenParser.new(filepath).parse.tokens
     @index = -1
-    puts @tokens
   end
 
   def has_more_tokens?
@@ -175,6 +174,8 @@ class TokenParser
     self
   end
 
+  private
+
   # Processes a single word in a line. A word in this context is a string with no spaces in it.
   # Returns false to signal that the current line being read should be skipped, otherwise true.
   # If multiple tokens exist in a single word, for example 'if(a=true)' then this method splits it
@@ -183,7 +184,7 @@ class TokenParser
     # If the word starts with // and we are not processing a comment, signal a skip line
     return false if word.start_with?('//') && !@processing_comment_block
 
-    # If the word starts with /* we can expect a comment block or a doc block. Skip all the remaining words untill
+    # If the word starts with /* we can expect a comment block or a doc block. Skip all the remaining words until
     # we encounter a */
     if word.start_with?('/*')
       @processing_comment_block = true
@@ -199,23 +200,20 @@ class TokenParser
     # Don't continue if processing a comment block
     return true if @processing_comment_block
 
-    # If the word starts with a '"' we can assume that it is a string constant. We name these compound words as it
-    # is the only word type that allows spaces.
-    if word.start_with?('"') || !@compound_word.nil?
+    # Compound words are string constants. Special processing needs to be applied to process them properly
+    if (word.start_with?('"') || !@compound_word.nil?) && delimiter_split(word).size == 1
       @compound_word = [] if @compound_word.nil?
       @compound_word << word
 
-      if word.end_with?('"') || word.end_with?('";')
+      if word.end_with?('"')
         word = @compound_word.join(' ')
         @compound_word = nil
       end
     end
 
-    return true unless @compound_word.nil?
-
     # Split the word using, keeping the delimiters
     # Delimiters are: ( ) + - = < > { } . ; ----- [ ] , * / & | ~
-    words_delimiter_split = word.split(%r{([()+\-=<>{}.;\[\],*/&|~|])}).filter { |s| !s.empty? }
+    words_delimiter_split = delimiter_split(word)
 
     # If the words_delimiter_split is larger than 1, it means that this word contains multiple tokens.
     # So process each element one by one recursively.
@@ -224,9 +222,17 @@ class TokenParser
         break unless process_word(tokens, w)
       end
     else
+      return true unless @compound_word.nil?
+
       tokens << word
     end
 
     true
+  end
+
+  def delimiter_split(word)
+    # Split the word using, keeping the delimiters
+    # Delimiters are: ( ) + - = < > { } . ; ----- [ ] , * / & | ~
+    word.split(%r{([()+\-=<>{}.;\[\],*/&|~|])}).filter { |s| !s.empty? }
   end
 end

@@ -30,7 +30,7 @@ module Rackcompiler
       files.each do |file|
         output_filepath = "#{@output_path}/#{File.basename(file, '.*')}.vm"
         puts "Compiling file '#{file}' to '#{output_filepath}'"
-        get_tokenizer(file, is_directory)
+        get_tokenizer(file, is_directory).write_xml(output_filepath)
       end
     end
 
@@ -60,8 +60,6 @@ module Rackcompiler
 
         @output_path = File.absolute_path(output_path)
       end
-
-      puts @output_path
     end
 
     def derive_output_file_name(filepath)
