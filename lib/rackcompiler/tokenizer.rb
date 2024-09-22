@@ -25,6 +25,11 @@ class Tokenizer
   def initialize(input_filepath)
     @tokens = TokenParser.new(input_filepath).parse.tokens
     @index = -1
+    @marked_index = @index
+  end
+
+  def to_s
+    @tokens
   end
 
   def has_more_tokens?
@@ -37,12 +42,56 @@ class Tokenizer
     @index += 1
   end
 
+  def mark
+    @marked_index = @index
+  end
+
+  def rewind
+    @index = @marked_index
+  end
+
   def reset
     @index = -1
+    @marked_index = @index
   end
 
   def current_token
     @tokens[@index]
+  end
+
+  def peek_token
+    raise 'Tried to peek when no more tokens to peek' unless has_more_tokens?
+
+    @tokens[@index + 1]
+  end
+
+  def peek_token_type
+    peeked_token = peek_token
+    raise 'Current token is nil' if peeked_token.nil?
+
+    return 'keyword' if Keyword.is_keyword(peeked_token)
+    return 'symbol' if Symbol.is_symbol(peeked_token)
+
+    integer_constant = number_or_nil(peeked_token)
+
+    unless integer_constant.nil?
+      raise "Integer constant '#{integer_constant}' outside of allowed range (0-32767)" unless integer_constant.between?(
+        0, 32_767
+      )
+
+      return 'integerConstant'
+    end
+
+    if peeked_token.start_with?('"')
+      return 'stringConstant' if peeked_token.end_with?('"')
+
+      raise "Corrupted token encountered: '#{peeked_token}'"
+
+    end
+
+    return 'identifier' unless peeked_token.match?(/\A\d/)
+
+    raise "Unable to determine token type for '#{peeked_token}'"
   end
 
   def token_type

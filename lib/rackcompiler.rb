@@ -15,9 +15,9 @@ module Rackcompiler
     # So handle either case accordingly.
     def compile
       if File.file?(@input_path)
-        output_filepath = "#{@output_path}/#{File.basename(@input_path, ".*")}.vm"
+        output_filepath = "#{@output_path}/#{File.basename(@input_path, ".*")}.xml"
         puts "Compiling file '#{@input_path}' to '#{output_filepath}'"
-        CompilationEngine.new(file, output_filepath)
+        CompilationEngine.new(@input_path, output_filepath).compile
       else
         files_to_compile = get_files_to_compile(@input_path)
         compile_files(files_to_compile, @output_path, @input_path)
@@ -30,12 +30,12 @@ module Rackcompiler
       raise 'Output path not defined, something went horribly wrong!' if output_path.nil?
 
       files.each do |file|
-        output_filepath = "#{output_path}/#{File.basename(file, ".*")}.vm"
+        output_filepath = "#{output_path}/#{File.basename(file, ".*")}.xml"
         input_filepath = "#{input_path}\\#{file}"
 
         puts "Compiling file '#{file}' to '#{output_filepath}'"
 
-        CompilationEngine.new(input_filepath, output_filepath)
+        CompilationEngine.new(input_filepath, output_filepath).compile
       end
     end
 
