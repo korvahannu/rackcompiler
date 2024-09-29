@@ -71,52 +71,54 @@ class CompilationEngine
     @subroutine_symbol_table = @subroutine_symbol_table.append
     @subroutine_symbol_table.define('this', @class_name, :arg) if @tokenizer.peek_token == 'method'
     process(tokens: %w[constructor function method], token_type: 'keyword')
-    process_or -> { process_type }, -> { process(token: 'void', token_type: 'keyword') }
+    expect_or -> { expect_type }, -> { expect(token: 'void', token_type: 'keyword') }
+    @return_type = advance_and_get # compile_return needs this for void types
     function_name = advance_and_get
     process(token: '(', token_type: 'symbol')
     parameter_count = compile_parameter_list
     process(token: ')', token_type: 'symbol')
-    @writer.write_function("#{@class_name}.#{function_name}", parameter_count)
+
+    process(token: '{', token_type: 'symbol')
+    variable_count = 0
+    variable_count += compile_var_dec while @tokenizer.peek_token == 'var'
+
+    # Write the function declaration only here as we need the count of local variables
+    @writer.write_function("#{@class_name}.#{function_name}", variable_count)
     @writer.indent
-    compile_subroutine_body
+
+    compile_statements
+    process(token: '}', token_type: 'symbol')
     @writer.undent
     @writer.write_empty_line
     @subroutine_symbol_table = @subroutine_symbol_table.reject
   end
 
   def compile_parameter_list
-    parameter_count = 0
     while @tokenizer.peek_token != ')'
       expect_type
       type = advance_and_get
       expect(token_type: 'identifier')
       name = advance_and_get
       @subroutine_symbol_table.define(name, type, :arg)
-      parameter_count += 1
       process(token: ',', token_type: 'symbol') if @tokenizer.peek_token == ','
     end
-    parameter_count
-  end
-
-  def compile_subroutine_body
-    process(token: '{', token_type: 'symbol')
-    compile_var_dec while @tokenizer.peek_token == 'var'
-    compile_statements
-    process(token: '}', token_type: 'symbol')
   end
 
   def compile_var_dec
+    variable_count = 0
     process(token: 'var', token_type: 'keyword')
     expect_type
     type = advance_and_get
 
     while @tokenizer.peek_token != ';'
+      variable_count += 1
       identifier = advance_and_get
       @subroutine_symbol_table.define(identifier, type, :var)
       process(token: ',', token_type: 'symbol') if @tokenizer.peek_token == ','
     end
 
     process(token: ';', token_type: 'symbol')
+    variable_count
   end
 
   def compile_statements
@@ -180,9 +182,8 @@ class CompilationEngine
   end
 
   def compile_if
-    label1 = "IF-LABEL-#{unique_identifier}"
-    label2 = "IF-LABEL-#{unique_identifier}"
-
+    label1 = "IF_EXP#{unique_identifier_if}"
+    label2 = "IF_END-#{unique_identifier_if}"
     process(token: 'if', token_type: 'keyword')
     process(token: '(', token_type: 'symbol')
     compile_expression
@@ -192,8 +193,8 @@ class CompilationEngine
     process(token: '{', token_type: 'symbol')
     compile_statements
     @writer.write_goto(label2)
-    process(token: '}', token_type: 'symbol')
     @writer.write_label(label1)
+    process(token: '}', token_type: 'symbol')
     if @tokenizer.peek_token == 'else'
       process(token: 'else', token_type: 'keyword')
       process(token: '{', token_type: 'symbol')
@@ -204,8 +205,8 @@ class CompilationEngine
   end
 
   def compile_while
-    label1 = "WHILE-LABEL-#{unique_identifier}"
-    label2 = "WHILE-LABEL-#{unique_identifier}"
+    label1 = "WHILE_EXP#{unique_identifier_while}"
+    label2 = "WHILE_END#{unique_identifier_while}"
     process(token: 'while', token_type: 'keyword')
     process(token: '(', token_type: 'symbol')
     @writer.write_label(label1)
@@ -223,6 +224,7 @@ class CompilationEngine
   def compile_do
     process(token: 'do', token_type: 'keyword')
     compile_subroutine_call
+    @writer.write_pop('temp', 0)
     process(token: ';', token_type: 'symbol')
   end
 
@@ -241,14 +243,8 @@ class CompilationEngine
     class_or_object_subroutine_call = lambda {
       process(token: '.', token_type: 'symbol')
       expect(token_type: 'identifier')
-      name = advance_and_get
-
-      if name.nil? == false
-        _, _, index = look_up('this')
-        @writer.write_pop('this', index)
-      else
-        @class_name2 = name
-      end
+      method_name = advance_and_get
+      @method_name = method_name
 
       process(token: '(', token_type: 'symbol')
       @argument_count = compile_expression_list
@@ -257,17 +253,18 @@ class CompilationEngine
 
     process_or(regular_subroutine_call, class_or_object_subroutine_call)
 
-    if @class_name2.nil?
-      @writer.write_call("#{@class_name}.#{name}", @argument_count)
+    if @method_name.nil?
+      @writer.write_call("#{@class_name}.#{name} ", @argument_count)
     else
-      @writer.write_call("#{@class_name2}.#{name}", @argument_count)
-      @class_name2 = nil
+      @writer.write_call("#{name}.#{@method_name}", @argument_count)
+      @method_name = nil
     end
   end
 
   def compile_return
     process(token: 'return', token_type: 'keyword')
     compile_expression if @tokenizer.peek_token != ';'
+    @writer.write_push('constant', 0) if @return_type == 'void'
     @writer.write_return
     process(token: ';', token_type: 'symbol')
   end
@@ -322,8 +319,8 @@ class CompilationEngine
       token = advance_and_get
       case (token)
       when 'true'
-        @writer.write_push('constant', 1)
-        @writer.write_arithmetic('neg')
+        @writer.write_push('constant', 0)
+        @writer.write_arithmetic('not')
       when 'false', 'null'
         @writer.write_push('constant', 0)
       when 'this'
@@ -372,9 +369,11 @@ class CompilationEngine
         compile_expression
         process(token: ')', token_type: 'symbol')
       elsif %w[~ -].include?(@tokenizer.peek_token)
-        process(tokens: %w[~ -], token_type: 'symbol')
+        expect(tokens: %w[~ -], token_type: 'symbol')
+        token = advance_and_get
         compile_term
-        @writer.write_arithmetic('neg')
+        @writer.write_arithmetic('neg') if token == "-"
+        @writer.write_arithmetic('not') if token == "~"
       end
     else
       raise ProcessingError,
@@ -405,6 +404,12 @@ class CompilationEngine
     first_lambda.call
   rescue ProcessingError => e
     @tokenizer.rewind
+    second_lambda.call
+  end
+
+  def expect_or(first_lambda, second_lambda)
+    first_lambda.call
+  rescue ProcessingError => e
     second_lambda.call
   end
 
@@ -443,7 +448,6 @@ class CompilationEngine
     elsif @tokenizer.peek_token_type == 'identifier'
       expect(token_type: 'identifier')
     else
-      @tokenizer.advance # Need to advance as process_or relies on it
       raise ProcessingError,
             "Error when inferring variable type from token '#{@tokenizer.peek_token}' with type '#{@tokenizer.peek_token_type}'"
     end
@@ -503,7 +507,13 @@ class CompilationEngine
     @code << output_str << "\n"
   end
 
-  def unique_identifier
+  def unique_identifier_if
+    @unique_identifier = -1 if @unique_identifier.nil?
+    @unique_identifier += 1
+    @unique_identifier
+  end
+
+  def unique_identifier_while
     @unique_identifier = -1 if @unique_identifier.nil?
     @unique_identifier += 1
     @unique_identifier
