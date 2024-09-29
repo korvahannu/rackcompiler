@@ -2,6 +2,7 @@
 
 require_relative 'vm_writer'
 require_relative 'symbol_table'
+require_relative 'character_set'
 
 class ProcessingError < Exception
 end
@@ -27,7 +28,9 @@ class CompilationEngine
     compile_class
     @code.strip!
 
-    puts @writer.code.strip
+    File.open(@output_filepath, 'w') do |output_file|
+      output_file.puts @writer.code.strip
+    end
 
     @tokenizer.reset
   end
@@ -38,7 +41,8 @@ class CompilationEngine
     output('<class>')
     ascend
     process(token: 'class', token_type: 'keyword')
-    process(token_type: 'identifier')
+    expect(token_type: 'identifier')
+    @class_name = advance_and_get
     process(token: '{', token_type: 'symbol')
     compile_class_var_dec while %w[static field].include?(@tokenizer.peek_token)
     compile_subroutine while %w[constructor function method].include?(@tokenizer.peek_token)
@@ -65,16 +69,18 @@ class CompilationEngine
 
   def compile_subroutine
     @subroutine_symbol_table = @subroutine_symbol_table.append
+    @subroutine_symbol_table.define('this', @class_name, :arg) if @tokenizer.peek_token == 'method'
     process(tokens: %w[constructor function method], token_type: 'keyword')
     process_or -> { process_type }, -> { process(token: 'void', token_type: 'keyword') }
     function_name = advance_and_get
     process(token: '(', token_type: 'symbol')
     parameter_count = compile_parameter_list
     process(token: ')', token_type: 'symbol')
-    @writer.write_function(function_name, parameter_count)
+    @writer.write_function("#{@class_name}.#{function_name}", parameter_count)
     @writer.indent
     compile_subroutine_body
     @writer.undent
+    @writer.write_empty_line
     @subroutine_symbol_table = @subroutine_symbol_table.reject
   end
 
@@ -125,123 +131,204 @@ class CompilationEngine
     end
   end
 
-  def compile_let #TODO
-    output('<letStatement>')
-    ascend
+  def compile_let
     process(token: 'let', token_type: 'keyword')
-    process(token_type: 'identifier')
+    expect(token_type: 'identifier')
+    name = advance_and_get
+    _, kind, index = look_up(name)
+
     if @tokenizer.peek_token == '['
+      case kind
+      when :static
+        @writer.write_push('static', index)
+      when :field
+        @writer.write_push('this', index)
+      when :var
+        @writer.write_push('local', index)
+      else
+        @writer.write_push('argument', index)
+      end
+
       process(token: '[', token_type: 'symbol')
       compile_expression
       process(token: ']', token_type: 'symbol')
+
+      @writer.write_arithmetic('add') # *(arr + 1) is on top of stack now
+      @writer.write_pop('pointer', 1) # Align segment that with the target address
+
+      process(token: '=', token_type: 'symbol')
+      compile_expression
+      process(token: ';', token_type: 'symbol')
+
+      @writer.write_pop('that', 0) # Push the expression result to array[...]
+    else
+      process(token: '=', token_type: 'symbol')
+      compile_expression
+      process(token: ';', token_type: 'symbol')
+
+      case kind
+      when :static
+        @writer.write_pop('static', index)
+      when :field
+        @writer.write_pop('this', index)
+      when :var
+        @writer.write_pop('local', index)
+      else
+        @writer.write_pop('argument', index)
+      end
     end
-    process(token: '=', token_type: 'symbol')
-    compile_expression
-    process(token: ';', token_type: 'symbol')
-    descend
-    output('</letStatement>')
   end
 
-  def compile_if #TODO
-    output('<ifStatement>')
-    ascend
+  def compile_if
+    label1 = "IF-LABEL-#{unique_identifier}"
+    label2 = "IF-LABEL-#{unique_identifier}"
+
     process(token: 'if', token_type: 'keyword')
     process(token: '(', token_type: 'symbol')
     compile_expression
+    @writer.write_arithmetic('not')
+    @writer.write_if(label1)
     process(token: ')', token_type: 'symbol')
     process(token: '{', token_type: 'symbol')
     compile_statements
+    @writer.write_goto(label2)
     process(token: '}', token_type: 'symbol')
+    @writer.write_label(label1)
     if @tokenizer.peek_token == 'else'
       process(token: 'else', token_type: 'keyword')
       process(token: '{', token_type: 'symbol')
       compile_statements
       process(token: '}', token_type: 'symbol')
     end
-    descend
-    output('</ifStatement>')
+    @writer.write_label(label2)
   end
 
-  def compile_while #TODO
-    output('<whileStatement>')
-    ascend
+  def compile_while
+    label1 = "WHILE-LABEL-#{unique_identifier}"
+    label2 = "WHILE-LABEL-#{unique_identifier}"
     process(token: 'while', token_type: 'keyword')
     process(token: '(', token_type: 'symbol')
+    @writer.write_label(label1)
     compile_expression
+    @writer.write_arithmetic('not')
+    @writer.write_if(label2)
     process(token: ')', token_type: 'symbol')
     process(token: '{', token_type: 'symbol')
     compile_statements
+    @writer.write_goto(label1)
+    @writer.write_label(label2)
     process(token: '}', token_type: 'symbol')
-    descend
-    output('</whileStatement>')
   end
 
-  def compile_do #TODO
-    output('<doStatement>')
-    ascend
+  def compile_do
     process(token: 'do', token_type: 'keyword')
     compile_subroutine_call
     process(token: ';', token_type: 'symbol')
-    descend
-    output('</doStatement>')
   end
 
-  def compile_subroutine_call #TODO
+  def compile_subroutine_call
     # Subroutine call does not have its own enclosing tag
-    process(token_type: 'identifier')
+    expect(token_type: 'identifier')
+    name = advance_and_get
+    @argument_count = 0
 
     regular_subroutine_call = lambda {
       process(token: '(', token_type: 'symbol')
-      compile_expression_list
+      @argument_count = compile_expression_list
       process(token: ')', token_type: 'symbol')
     }
 
     class_or_object_subroutine_call = lambda {
       process(token: '.', token_type: 'symbol')
-      process(token_type: 'identifier')
+      expect(token_type: 'identifier')
+      name = advance_and_get
+
+      if name.nil? == false
+        _, _, index = look_up('this')
+        @writer.write_pop('this', index)
+      else
+        @class_name2 = name
+      end
+
       process(token: '(', token_type: 'symbol')
-      compile_expression_list
+      @argument_count = compile_expression_list
       process(token: ')', token_type: 'symbol')
     }
 
     process_or(regular_subroutine_call, class_or_object_subroutine_call)
+
+    if @class_name2.nil?
+      @writer.write_call("#{@class_name}.#{name}", @argument_count)
+    else
+      @writer.write_call("#{@class_name2}.#{name}", @argument_count)
+      @class_name2 = nil
+    end
   end
 
-  def compile_return #TODO
-    output('<returnStatement>')
-    ascend
+  def compile_return
     process(token: 'return', token_type: 'keyword')
     compile_expression if @tokenizer.peek_token != ';'
+    @writer.write_return
     process(token: ';', token_type: 'symbol')
-    descend
-    output('</returnStatement>')
   end
 
-  def compile_expression #TODO
-    output('<expression>')
-    ascend
+  def compile_expression
     compile_term
     op = %w[+ - * / & | < > =]
 
     while op.include?(@tokenizer.peek_token)
-      process(tokens: op, token_type: 'symbol')
+      expect(tokens: op, token_type: 'symbol')
+      symbol = advance_and_get
       compile_term
+      case (symbol)
+      when '+'
+        @writer.write_arithmetic('add')
+      when '-'
+        @writer.write_arithmetic('sub')
+      when '*'
+        @writer.write_call('Math.multiply', 2)
+      when '/'
+        @writer.write_call('Math.divide', 2)
+      when '&'
+        @writer.write_arithmetic('and')
+      when '|'
+        @writer.write_arithmetic('or')
+      when '<'
+        @writer.write_arithmetic('lt')
+      when '>'
+        @writer.write_arithmetic('gt')
+      when '='
+        @writer.write_arithmetic('eq')
+      end
     end
-
-    descend
-    output('</expression>')
   end
 
-  def compile_term #TODO
-    output('<term>')
-    ascend
+  def compile_term
     case @tokenizer.peek_token_type
     when 'integerConstant'
-      process(token_type: 'integerConstant')
+      expect(token_type: 'integerConstant')
+      @writer.write_push('constant', advance_and_get)
     when 'stringConstant'
-      process(token_type: 'stringConstant')
+      expect(token_type: 'stringConstant')
+      parsed_string = advance_and_get[1...-1] # remove the outer "..." from the string constant
+      @writer.write_push('constant', parsed_string.size)
+      @writer.write_call('String.new', 1)
+      parsed_string.each_char do |char|
+        @writer.write_push('constant', CharacterSet.to_number(char))
+        @writer.write_call('String.appendChar', 2)
+      end
     when 'keyword' # true false null this
-      process(tokens: %w[true false null this], token_type: 'keyword')
+      expect(tokens: %w[true false null this], token_type: 'keyword')
+      token = advance_and_get
+      case (token)
+      when 'true'
+        @writer.write_push('constant', 1)
+        @writer.write_arithmetic('neg')
+      when 'false', 'null'
+        @writer.write_push('constant', 0)
+      when 'this'
+        @writer.write_push('pointer', 0)
+      end
     when 'identifier' # variable name or variable name [expression]
 
       # We have to see if this is a varName, varName[expression], or subroutineCall. To know this, we must check
@@ -254,11 +341,29 @@ class CompilationEngine
       if %w[( .].include?(peeked_peeked_token)
         compile_subroutine_call
       else
-        process(token_type: 'identifier')
+        expect(token_type: 'identifier')
+        name = advance_and_get
+        _, kind, index = look_up(name)
+
+        case kind
+        when :static
+          @writer.write_push('static', index)
+        when :field
+          @writer.write_push('this', index)
+        when :var
+          @writer.write_push('local', index)
+        else
+          @writer.write_push('argument', index)
+        end
+
+        # This is for arrays
         if @tokenizer.peek_token == '['
           process(token: '[', token_type: 'symbol')
           compile_expression
           process(token: ']', token_type: 'symbol')
+          @writer.write_arithmetic('add') # *(arr + 1) is on top of stack now
+          @writer.write_pop('pointer', 1) # Align segment that with the target address
+          @writer.write_push('that', 0) # Push the value of array[x] to stack
         end
       end
     when 'symbol'
@@ -269,25 +374,22 @@ class CompilationEngine
       elsif %w[~ -].include?(@tokenizer.peek_token)
         process(tokens: %w[~ -], token_type: 'symbol')
         compile_term
+        @writer.write_arithmetic('neg')
       end
     else
       raise ProcessingError,
             "Could not compile term with peeked token '#{@tokenizer.peek_token}' and type '#{@tokenizer.peek_token_type}'"
     end
-    descend
-    output('</term>')
   end
 
-  def compile_expression_list #TODO
-    output('<expressionList>')
-    ascend
+  def compile_expression_list
+    expression_count = 0
     while @tokenizer.peek_token != ')'
+      expression_count += 1
       compile_expression
-
       process(token: ',', token_type: 'symbol') if @tokenizer.peek_token == ','
     end
-    descend
-    output('</expressionList>')
+    expression_count
   end
 
   def ascend
@@ -358,15 +460,14 @@ class CompilationEngine
       type = @subroutine_symbol_table.type_of(name)
       kind = @subroutine_symbol_table.kind_of(name)
       index = @subroutine_symbol_table.index_of(name)
-      [type, kind, index]
+      return [type, kind, index]
     elsif @class_symbol_table.has_named(name)
       type = @class_symbol_table.type_of(name)
       kind = @class_symbol_table.kind_of(name)
       index = @class_symbol_table.index_of(name)
-      [type, kind, index]
-    else
-      raise "Could not find variable #{name} in symbol tables."
+      return [type, kind, index]
     end
+    nil
   end
 
   def process(token_type: nil, token: nil, tokens: nil)
@@ -400,5 +501,11 @@ class CompilationEngine
     output_str << str
 
     @code << output_str << "\n"
+  end
+
+  def unique_identifier
+    @unique_identifier = -1 if @unique_identifier.nil?
+    @unique_identifier += 1
+    @unique_identifier
   end
 end

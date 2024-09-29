@@ -20,7 +20,7 @@ class VMWriter
   end
 
   def write_arithmetic(command)
-    command.downcase!
+    command = command.downcase
 
     raise "Unknown arithmetic command #{command}" unless ARITHMETIC_COMMANDS.include?(command)
 
@@ -59,14 +59,18 @@ class VMWriter
     @indent -= 1
   end
 
+  def write_empty_line
+    # @code << "\n"
+  end
+
   private
 
   def write_line(line)
-    @indent.times do
-      INDENT_SPACES.times do
-        @code << ' '
-      end
-    end
+    #@indent.times do
+    #  INDENT_SPACES.times do
+    #    @code << ' '
+    #  end
+    #end
 
     @code << line
     @code << "\n"
