@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require_relative 'vm_writer'
+require_relative 'symbol_table'
+
 class ProcessingError < Exception
 end
 
@@ -12,6 +15,10 @@ class CompilationEngine
     @current_depth = 0
     @code = String.new
 
+    @writer = VMWriter.new
+    @class_symbol_table = SymbolTable.new
+    @subroutine_symbol_table = SymbolTable.new
+
     @tokenizer = Tokenizer.new(@input_filepath)
     raise 'Empty tokenizer ' unless @tokenizer.has_more_tokens?
   end
@@ -20,9 +27,7 @@ class CompilationEngine
     compile_class
     @code.strip!
 
-    File.open(@output_filepath, 'w') do |output_file|
-      output_file.puts @code
-    end
+    puts @writer.code.strip
 
     @tokenizer.reset
   end
@@ -43,76 +48,72 @@ class CompilationEngine
   end
 
   def compile_class_var_dec
-    output('<classVarDec>')
-    ascend
-    process(tokens: %w[static field], token_type: 'keyword')
-    process_type
-    process(token_type: 'identifier')
+    expect(tokens: %w[static field], token_type: 'keyword')
+    kind = advance_and_get.to_sym
+    expect_type
+    type = advance_and_get
+    expect(token_type: 'identifier')
+    name = advance_and_get
+    @class_symbol_table.define(name, type, kind)
     while @tokenizer.peek_token == ','
       process(token: ',', token_type: 'symbol')
-      process(token_type: 'identifier')
+      name = advance_and_get
+      @class_symbol_table.define(name, type, kind)
     end
     process(token: ';', token_type: 'symbol')
-    descend
-    output('</classVarDec>')
   end
 
   def compile_subroutine
-    output('<subroutineDec>')
-    ascend
+    @subroutine_symbol_table = @subroutine_symbol_table.append
     process(tokens: %w[constructor function method], token_type: 'keyword')
     process_or -> { process_type }, -> { process(token: 'void', token_type: 'keyword') }
-    process(token_type: 'identifier')
+    function_name = advance_and_get
     process(token: '(', token_type: 'symbol')
-    compile_parameter_list
+    parameter_count = compile_parameter_list
     process(token: ')', token_type: 'symbol')
+    @writer.write_function(function_name, parameter_count)
+    @writer.indent
     compile_subroutine_body
-    descend
-    output('</subroutineDec>')
+    @writer.undent
+    @subroutine_symbol_table = @subroutine_symbol_table.reject
   end
 
   def compile_parameter_list
-    output('<parameterList>')
-    ascend
+    parameter_count = 0
     while @tokenizer.peek_token != ')'
-      process_type
-      process(token_type: 'identifier')
+      expect_type
+      type = advance_and_get
+      expect(token_type: 'identifier')
+      name = advance_and_get
+      @subroutine_symbol_table.define(name, type, :arg)
+      parameter_count += 1
       process(token: ',', token_type: 'symbol') if @tokenizer.peek_token == ','
     end
-    descend
-    output('</parameterList>')
+    parameter_count
   end
 
   def compile_subroutine_body
-    output('<subroutineBody>')
-    ascend
     process(token: '{', token_type: 'symbol')
     compile_var_dec while @tokenizer.peek_token == 'var'
     compile_statements
     process(token: '}', token_type: 'symbol')
-    descend
-    output('</subroutineBody>')
   end
 
   def compile_var_dec
-    output('<varDec>')
-    ascend
     process(token: 'var', token_type: 'keyword')
-    process_type
+    expect_type
+    type = advance_and_get
 
     while @tokenizer.peek_token != ';'
-      process(token_type: 'identifier')
+      identifier = advance_and_get
+      @subroutine_symbol_table.define(identifier, type, :var)
       process(token: ',', token_type: 'symbol') if @tokenizer.peek_token == ','
     end
 
     process(token: ';', token_type: 'symbol')
-    descend
-    output('</varDec>')
   end
 
   def compile_statements
-    output('<statements>')
-    ascend
     peeked_token = @tokenizer.peek_token
     while %w[let if while do return].include?(peeked_token)
       compile_let if peeked_token == 'let'
@@ -122,11 +123,9 @@ class CompilationEngine
       compile_return if peeked_token == 'return'
       peeked_token = @tokenizer.peek_token
     end
-    descend
-    output('</statements>')
   end
 
-  def compile_let
+  def compile_let #TODO
     output('<letStatement>')
     ascend
     process(token: 'let', token_type: 'keyword')
@@ -143,7 +142,7 @@ class CompilationEngine
     output('</letStatement>')
   end
 
-  def compile_if
+  def compile_if #TODO
     output('<ifStatement>')
     ascend
     process(token: 'if', token_type: 'keyword')
@@ -163,7 +162,7 @@ class CompilationEngine
     output('</ifStatement>')
   end
 
-  def compile_while
+  def compile_while #TODO
     output('<whileStatement>')
     ascend
     process(token: 'while', token_type: 'keyword')
@@ -177,7 +176,7 @@ class CompilationEngine
     output('</whileStatement>')
   end
 
-  def compile_do
+  def compile_do #TODO
     output('<doStatement>')
     ascend
     process(token: 'do', token_type: 'keyword')
@@ -187,7 +186,7 @@ class CompilationEngine
     output('</doStatement>')
   end
 
-  def compile_subroutine_call
+  def compile_subroutine_call #TODO
     # Subroutine call does not have its own enclosing tag
     process(token_type: 'identifier')
 
@@ -208,7 +207,7 @@ class CompilationEngine
     process_or(regular_subroutine_call, class_or_object_subroutine_call)
   end
 
-  def compile_return
+  def compile_return #TODO
     output('<returnStatement>')
     ascend
     process(token: 'return', token_type: 'keyword')
@@ -218,7 +217,7 @@ class CompilationEngine
     output('</returnStatement>')
   end
 
-  def compile_expression
+  def compile_expression #TODO
     output('<expression>')
     ascend
     compile_term
@@ -233,7 +232,7 @@ class CompilationEngine
     output('</expression>')
   end
 
-  def compile_term
+  def compile_term #TODO
     output('<term>')
     ascend
     case @tokenizer.peek_token_type
@@ -279,7 +278,7 @@ class CompilationEngine
     output('</term>')
   end
 
-  def compile_expression_list
+  def compile_expression_list #TODO
     output('<expressionList>')
     ascend
     while @tokenizer.peek_token != ')'
@@ -317,6 +316,56 @@ class CompilationEngine
       @tokenizer.advance # Need to advance as process_or relies on it
       raise ProcessingError,
             "Error when inferring variable type from token '#{@tokenizer.peek_token}' with type '#{@tokenizer.peek_token_type}'"
+    end
+  end
+
+  def expect(token_type: nil, token: nil, tokens: nil)
+    if !token.nil? && @tokenizer.peek_token != token
+      raise ProcessingError, "Token '#{@tokenizer.peek_token}' did not match expected token '#{token}'"
+    end
+
+    if !tokens.nil? && !tokens.include?(@tokenizer.peek_token)
+      raise ProcessingError, "Token '#{@tokenizer.peek_token}' did not match any of the expected tokens '#{tokens}'"
+    end
+
+    unless !token_type.nil? && token_type == @tokenizer.peek_token_type
+      raise ProcessingError,
+            "Token type #{@tokenizer.peek_token_type} did not match expected token type '#{token_type}' for token '#{@tokenizer.peek_token}'"
+    end
+  end
+
+  def expect_type
+    variable_types = %w[int char boolean]
+    if variable_types.include?(@tokenizer.peek_token)
+      expect(tokens: variable_types, token_type: 'keyword')
+    elsif @tokenizer.peek_token_type == 'identifier'
+      expect(token_type: 'identifier')
+    else
+      @tokenizer.advance # Need to advance as process_or relies on it
+      raise ProcessingError,
+            "Error when inferring variable type from token '#{@tokenizer.peek_token}' with type '#{@tokenizer.peek_token_type}'"
+    end
+  end
+
+  def advance_and_get
+    @tokenizer.advance
+    @tokenizer.current_token
+  end
+
+  # Looks up the variable with a given name and returns [type, kind, index]
+  def look_up(name)
+    if @subroutine_symbol_table.has_named(name)
+      type = @subroutine_symbol_table.type_of(name)
+      kind = @subroutine_symbol_table.kind_of(name)
+      index = @subroutine_symbol_table.index_of(name)
+      [type, kind, index]
+    elsif @class_symbol_table.has_named(name)
+      type = @class_symbol_table.type_of(name)
+      kind = @class_symbol_table.kind_of(name)
+      index = @class_symbol_table.index_of(name)
+      [type, kind, index]
+    else
+      raise "Could not find variable #{name} in symbol tables."
     end
   end
 
