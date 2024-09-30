@@ -70,12 +70,13 @@ class CompilationEngine
   def compile_subroutine
     @subroutine_symbol_table = @subroutine_symbol_table.append
     @subroutine_symbol_table.define('this', @class_name, :arg) if @tokenizer.peek_token == 'method'
-    process(tokens: %w[constructor function method], token_type: 'keyword')
+    expect(tokens: %w[constructor function method], token_type: 'keyword')
+    subroutine_type = advance_and_get
     expect_or -> { expect_type }, -> { expect(token: 'void', token_type: 'keyword') }
     @return_type = advance_and_get # compile_return needs this for void types
     function_name = advance_and_get
     process(token: '(', token_type: 'symbol')
-    parameter_count = compile_parameter_list
+    compile_parameter_list
     process(token: ')', token_type: 'symbol')
 
     process(token: '{', token_type: 'symbol')
@@ -84,6 +85,19 @@ class CompilationEngine
 
     # Write the function declaration only here as we need the count of local variables
     @writer.write_function("#{@class_name}.#{function_name}", variable_count)
+
+    if subroutine_type == 'constructor'
+      object_size = @class_symbol_table.size_of(:field)
+      @writer.write_push('constant', object_size)
+      @writer.write_call("Memory.alloc", 1)
+      @writer.write_pop('pointer', 0)
+    end
+
+    if subroutine_type == 'method'
+      @writer.write_push('argument', 0) # Align this
+      @writer.write_pop('pointer', 0)
+    end
+
     @writer.indent
 
     compile_statements
@@ -137,19 +151,10 @@ class CompilationEngine
     process(token: 'let', token_type: 'keyword')
     expect(token_type: 'identifier')
     name = advance_and_get
-    _, kind, index = look_up(name)
+    _, _, index = look_up(name)
 
     if @tokenizer.peek_token == '['
-      case kind
-      when :static
-        @writer.write_push('static', index)
-      when :field
-        @writer.write_push('this', index)
-      when :var
-        @writer.write_push('local', index)
-      else
-        @writer.write_push('argument', index)
-      end
+      @writer.write_push(segment_name_for(name), index)
 
       process(token: '[', token_type: 'symbol')
       compile_expression
@@ -167,17 +172,7 @@ class CompilationEngine
       process(token: '=', token_type: 'symbol')
       compile_expression
       process(token: ';', token_type: 'symbol')
-
-      case kind
-      when :static
-        @writer.write_pop('static', index)
-      when :field
-        @writer.write_pop('this', index)
-      when :var
-        @writer.write_pop('local', index)
-      else
-        @writer.write_pop('argument', index)
-      end
+      @writer.write_pop(segment_name_for(name), index)
     end
   end
 
@@ -232,32 +227,31 @@ class CompilationEngine
     # Subroutine call does not have its own enclosing tag
     expect(token_type: 'identifier')
     name = advance_and_get
-    @argument_count = 0
 
-    regular_subroutine_call = lambda {
+    if @tokenizer.peek_token == '('
       process(token: '(', token_type: 'symbol')
-      @argument_count = compile_expression_list
+      argument_count = compile_expression_list
       process(token: ')', token_type: 'symbol')
-    }
-
-    class_or_object_subroutine_call = lambda {
-      process(token: '.', token_type: 'symbol')
+      @writer.write_push('pointer', 0)
+      @writer.write_call("#{@class_name}.#{name}", argument_count + 1)
+    elsif process(token: '.', token_type: 'symbol')
       expect(token_type: 'identifier')
       method_name = advance_and_get
-      @method_name = method_name
+
+      type, _, index = look_up(name)
+      is_method_call = !type.nil?
+
+      if is_method_call
+        @writer.write_push(segment_name_for(name), index)
+      end
 
       process(token: '(', token_type: 'symbol')
-      @argument_count = compile_expression_list
+      argument_count = compile_expression_list
       process(token: ')', token_type: 'symbol')
-    }
 
-    process_or(regular_subroutine_call, class_or_object_subroutine_call)
+      name = type unless type.nil?
 
-    if @method_name.nil?
-      @writer.write_call("#{@class_name}.#{name} ", @argument_count)
-    else
-      @writer.write_call("#{name}.#{@method_name}", @argument_count)
-      @method_name = nil
+      @writer.write_call("#{name}.#{method_name}", is_method_call ? argument_count + 1 : argument_count)
     end
   end
 
@@ -340,18 +334,8 @@ class CompilationEngine
       else
         expect(token_type: 'identifier')
         name = advance_and_get
-        _, kind, index = look_up(name)
-
-        case kind
-        when :static
-          @writer.write_push('static', index)
-        when :field
-          @writer.write_push('this', index)
-        when :var
-          @writer.write_push('local', index)
-        else
-          @writer.write_push('argument', index)
-        end
+        _, _, index = look_up(name)
+        @writer.write_push(segment_name_for(name), index)
 
         # This is for arrays
         if @tokenizer.peek_token == '['
@@ -409,7 +393,7 @@ class CompilationEngine
 
   def expect_or(first_lambda, second_lambda)
     first_lambda.call
-  rescue ProcessingError => e
+  rescue ProcessingError => _
     second_lambda.call
   end
 
@@ -474,6 +458,15 @@ class CompilationEngine
     nil
   end
 
+  def segment_name_for(name)
+    if @subroutine_symbol_table.has_named(name)
+      return @subroutine_symbol_table.segment_name_of(name)
+    elsif @class_symbol_table.has_named(name)
+      return @class_symbol_table.segment_name_of(name)
+    end
+    nil
+  end
+
   def process(token_type: nil, token: nil, tokens: nil)
     @tokenizer.advance
 
@@ -510,12 +503,10 @@ class CompilationEngine
   def unique_identifier_if
     @unique_identifier = -1 if @unique_identifier.nil?
     @unique_identifier += 1
-    @unique_identifier
   end
 
   def unique_identifier_while
     @unique_identifier = -1 if @unique_identifier.nil?
     @unique_identifier += 1
-    @unique_identifier
   end
 end

@@ -69,6 +69,20 @@ class SymbolTable
     nil
   end
 
+  def segment_name_of(name)
+    kind = kind_of(name)
+    case (kind)
+    when :static
+      'static'
+    when :field
+      'this'
+    when :var
+      'local'
+    else
+      'argument'
+    end
+  end
+
   # Returns the index of the named identifier or nil if it does not exist
   def index_of(name)
     kind = kind_of(name)
@@ -105,6 +119,21 @@ class SymbolTable
       result << "#{entry.type} #{entry.name}\n"
     end
     result
+  end
+
+  def size_of(kind)
+    case kind
+    when :static
+      @static.size
+    when :field
+      @field.size
+    when :arg
+      @arg.size
+    when :var
+      @var.size
+    else
+      raise "Unknown variable kind of '#{kind}' when getting entries of kind"
+    end
   end
 
   private
