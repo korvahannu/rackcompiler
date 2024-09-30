@@ -36,16 +36,15 @@ class SymbolTable
 
   # Adds a new variable to the table with a given name, type, and kind
   def define(name, type, kind)
-    if @mapping.include?(name)
-      raise "Trying to define variable #{name} of type #{type}, but it is already defined."
-    end
+    raise "Trying to define variable #{name} of type #{type}, but it is already defined." if @mapping.include?(name)
 
     entries = get_entries_of_kind(kind)
     entries << SymbolTableEntry.new(name, type)
     @mapping[name] = kind
   end
 
-  def has_named(name)
+  # Returns True if a variable with the given name exists in this symbol table
+  def named?(name)
     !@mapping[name].nil?
   end
 
@@ -69,9 +68,9 @@ class SymbolTable
     nil
   end
 
-  def segment_name_of(name)
+  def segment_name_for(name)
     kind = kind_of(name)
-    case (kind)
+    case kind
     when :static
       'static'
     when :field

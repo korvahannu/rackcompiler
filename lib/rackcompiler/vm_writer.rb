@@ -2,7 +2,7 @@
 
 class VMWriter
   INDENT_SPACES = 2
-  ARITHMETIC_COMMANDS = %w[add sub neg eq gt lt and or not]
+  ARITHMETIC_COMMANDS = %w[add sub neg eq gt lt and or not].freeze
 
   attr_accessor :code
 
@@ -24,7 +24,7 @@ class VMWriter
 
     raise "Unknown arithmetic command #{command}" unless ARITHMETIC_COMMANDS.include?(command)
 
-    write_line("#{command}")
+    write_line(command.to_s)
   end
 
   def write_label(label)
@@ -48,7 +48,7 @@ class VMWriter
   end
 
   def write_return
-    write_line("return")
+    write_line('return')
   end
 
   def indent
@@ -60,17 +60,17 @@ class VMWriter
   end
 
   def write_empty_line
-    # @code << "\n"
+    @code << "\n"
   end
 
   private
 
   def write_line(line)
-    #@indent.times do
-    #  INDENT_SPACES.times do
-    #    @code << ' '
-    #  end
-    #end
+    @indent.times do
+      INDENT_SPACES.times do
+        @code << ' '
+      end
+    end
 
     @code << line
     @code << "\n"

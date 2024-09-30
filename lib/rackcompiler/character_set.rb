@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class CharacterSet
   MAP = {
     ' ': 32,
@@ -101,12 +103,14 @@ class CharacterSet
     def to_number(char)
       number = MAP[char.to_sym]
       raise "Unknown character #{char}" if number.nil?
+
       number
     end
 
     def to_char(number)
       char = MAP.key(number)
       raise "Unknown character number #{number}" if char.nil?
+
       char
     end
   end
