@@ -15,7 +15,7 @@ module Rackcompiler
     # So handle either case accordingly.
     def compile
       if File.file?(@input_path)
-        output_filepath = "#{@output_path}/#{File.basename(@input_path, ".*")}.xml"
+        output_filepath = "#{@output_path}/#{File.basename(@input_path, ".*")}.vm"
         puts "Compiling file '#{@input_path}' to '#{output_filepath}'"
         CompilationEngine.new(@input_path, output_filepath).compile
       else
@@ -30,7 +30,7 @@ module Rackcompiler
       raise 'Output path not defined, something went horribly wrong!' if output_path.nil?
 
       files.each do |file|
-        output_filepath = "#{output_path}/#{File.basename(file, ".*")}.xml"
+        output_filepath = "#{output_path}/#{File.basename(file, ".*")}.vm"
         input_filepath = "#{input_path}\\#{file}"
 
         puts "Compiling file '#{file}' to '#{output_filepath}'"

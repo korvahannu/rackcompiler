@@ -5,7 +5,7 @@ class Keyword
                 true false null this].freeze
 
   class << self
-    def is_keyword(word)
+    def keyword?(word)
       KEYWORDS.include?(word)
     end
   end
@@ -15,7 +15,7 @@ class Symbol
   SYMBOLS = %w[{ } ( ) [ ] . , ; + - * / & | < > = ~].freeze
 
   class << self
-    def is_symbol(word)
+    def symbol?(word)
       SYMBOLS.include?(word)
     end
   end
@@ -32,12 +32,12 @@ class Tokenizer
     @tokens
   end
 
-  def has_more_tokens?
+  def more_tokens?
     @index + 1 < @tokens.length
   end
 
   def advance
-    raise 'No more tokens to process' unless has_more_tokens?
+    raise 'No more tokens to process' unless more_tokens?
 
     @index += 1
   end
@@ -60,7 +60,7 @@ class Tokenizer
   end
 
   def peek_token
-    raise 'Tried to peek when no more tokens to peek' unless has_more_tokens?
+    raise 'Tried to peek when no more tokens to peek' unless more_tokens?
 
     @tokens[@index + 1]
   end
@@ -69,8 +69,8 @@ class Tokenizer
     peeked_token = peek_token
     raise 'Current token is nil' if peeked_token.nil?
 
-    return 'keyword' if Keyword.is_keyword(peeked_token)
-    return 'symbol' if Symbol.is_symbol(peeked_token)
+    return 'keyword' if Keyword.keyword?(peeked_token)
+    return 'symbol' if Symbol.symbol?(peeked_token)
 
     integer_constant = number_or_nil(peeked_token)
 
@@ -97,8 +97,8 @@ class Tokenizer
   def token_type
     raise 'Current token is nil' if current_token.nil?
 
-    return 'keyword' if Keyword.is_keyword(current_token)
-    return 'symbol' if Symbol.is_symbol(current_token)
+    return 'keyword' if Keyword.keyword?(current_token)
+    return 'symbol' if Symbol.symbol?(current_token)
 
     integer_constant = number_or_nil(current_token)
 
@@ -166,7 +166,7 @@ class Tokenizer
   def write_xml(output_filepath)
     File.open(output_filepath, 'w') do |output_file|
       output_file.puts '<tokens>'
-      while has_more_tokens?
+      while more_tokens?
         advance
         output_file.puts xml_element
       end
@@ -256,6 +256,8 @@ class TokenParser
     # Don't continue if processing a comment block
     return true if @processing_comment_block
 
+    compounded_word = false
+
     # Compound words are string constants. Special processing needs to be applied to process them properly
     if (word.start_with?('"') || !@compound_word.nil?) && delimiter_split(word).size == 1
       @compound_word = [] if @compound_word.nil?
@@ -264,6 +266,7 @@ class TokenParser
       if word.end_with?('"')
         word = @compound_word.join(' ')
         @compound_word = nil
+        compounded_word = true
       end
     end
 
@@ -273,7 +276,7 @@ class TokenParser
 
     # If the words_delimiter_split is larger than 1, it means that this word contains multiple tokens.
     # So process each element one by one recursively.
-    if words_delimiter_split.size > 1
+    if words_delimiter_split.size > 1 && !compounded_word
       words_delimiter_split.each do |w|
         break unless process_word(tokens, w)
       end
@@ -289,6 +292,6 @@ class TokenParser
   def delimiter_split(word)
     # Split the word using, keeping the delimiters
     # Delimiters are: ( ) + - = < > { } . ; ----- [ ] , * / & | ~
-    word.split(%r{([()+\-=<>{}.;\[\],*/&|~|])}).filter { |s| !s.empty? }
+    word.split(%r{([()+\-=<>{}.;\[\],*/&|~])}).filter { |s| !s.empty? }
   end
 end
