@@ -256,6 +256,8 @@ class TokenParser
     # Don't continue if processing a comment block
     return true if @processing_comment_block
 
+    compounded_word = false
+
     # Compound words are string constants. Special processing needs to be applied to process them properly
     if (word.start_with?('"') || !@compound_word.nil?) && delimiter_split(word).size == 1
       @compound_word = [] if @compound_word.nil?
@@ -264,6 +266,7 @@ class TokenParser
       if word.end_with?('"')
         word = @compound_word.join(' ')
         @compound_word = nil
+        compounded_word = true
       end
     end
 
@@ -273,7 +276,7 @@ class TokenParser
 
     # If the words_delimiter_split is larger than 1, it means that this word contains multiple tokens.
     # So process each element one by one recursively.
-    if words_delimiter_split.size > 1
+    if words_delimiter_split.size > 1 && !compounded_word
       words_delimiter_split.each do |w|
         break unless process_word(tokens, w)
       end

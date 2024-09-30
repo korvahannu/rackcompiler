@@ -13,8 +13,6 @@ class CompilationEngine
   def initialize(input_filepath, output_filepath)
     @input_filepath = input_filepath
     @output_filepath = output_filepath
-    @current_depth = 0
-    @code = String.new
 
     @writer = VMWriter.new
     @class_symbol_table = SymbolTable.new
@@ -26,7 +24,6 @@ class CompilationEngine
 
   def compile
     compile_class
-    @code.strip!
 
     File.open(@output_filepath, 'w') do |output_file|
       output_file.puts @writer.code.strip
@@ -38,8 +35,6 @@ class CompilationEngine
   private
 
   def compile_class
-    output('<class>')
-    ascend
     process(token: 'class', token_type: 'keyword')
     expect(token_type: 'identifier')
     @class_name = advance_and_get
@@ -47,8 +42,6 @@ class CompilationEngine
     compile_class_var_dec while %w[static field].include?(@tokenizer.peek_token)
     compile_subroutine while %w[constructor function method].include?(@tokenizer.peek_token)
     process(token: '}', token_type: 'symbol')
-    descend
-    output('</class>')
   end
 
   def compile_class_var_dec
@@ -136,14 +129,12 @@ class CompilationEngine
   end
 
   def compile_statements
-    peeked_token = @tokenizer.peek_token
-    while %w[let if while do return].include?(peeked_token)
-      compile_let if peeked_token == 'let'
-      compile_if if peeked_token == 'if'
-      compile_while if peeked_token == 'while'
-      compile_do if peeked_token == 'do'
-      compile_return if peeked_token == 'return'
-      peeked_token = @tokenizer.peek_token
+    while %w[let if while do return].include?(@tokenizer.peek_token)
+      compile_let if @tokenizer.peek_token == 'let'
+      compile_if if @tokenizer.peek_token == 'if'
+      compile_while if @tokenizer.peek_token == 'while'
+      compile_do if @tokenizer.peek_token == 'do'
+      compile_return if @tokenizer.peek_token == 'return'
     end
   end
 
@@ -161,13 +152,15 @@ class CompilationEngine
       process(token: ']', token_type: 'symbol')
 
       @writer.write_arithmetic('add') # *(arr + 1) is on top of stack now
-      @writer.write_pop('pointer', 1) # Align segment that with the target address
 
       process(token: '=', token_type: 'symbol')
       compile_expression
       process(token: ';', token_type: 'symbol')
 
-      @writer.write_pop('that', 0) # Push the expression result to array[...]
+      @writer.write_pop('temp', 0) # store result of expression2 to to temp 0
+      @writer.write_pop('pointer', 1) # Align segment THAT with the target address
+      @writer.write_push('temp', 0)
+      @writer.write_pop('that', 0) # Push the value of array[x] to stack
     else
       process(token: '=', token_type: 'symbol')
       compile_expression
@@ -230,9 +223,9 @@ class CompilationEngine
 
     if @tokenizer.peek_token == '('
       process(token: '(', token_type: 'symbol')
+      @writer.write_push('pointer', 0)
       argument_count = compile_expression_list
       process(token: ')', token_type: 'symbol')
-      @writer.write_push('pointer', 0)
       @writer.write_call("#{@class_name}.#{name}", argument_count + 1)
     elsif process(token: '.', token_type: 'symbol')
       expect(token_type: 'identifier')
@@ -375,14 +368,6 @@ class CompilationEngine
     expression_count
   end
 
-  def ascend
-    @current_depth += 1
-  end
-
-  def descend
-    @current_depth -= 1
-  end
-
   def process_or(first_lambda, second_lambda)
     @tokenizer.mark
     first_lambda.call
@@ -482,22 +467,7 @@ class CompilationEngine
       raise ProcessingError,
             "Token type '#{@tokenizer.token_type}' did not match expected token type '#{token_type}' for token '#{@tokenizer.current_token}'"
     end
-
-    output(@tokenizer.xml_element)
-  end
-
-  def output(str)
-    output_str = String.new
-
-    @current_depth.times do
-      INDENT_SPACES.times do
-        output_str << ' '
-      end
-    end
-
-    output_str << str
-
-    @code << output_str << "\n"
+    ''
   end
 
   def unique_identifier_if
